@@ -74,6 +74,9 @@ dependencies:
   workmanager: ^0.10.10
   logger: ^2.8.0
 
+  native_download:
+    path: packages/native_download
+
 dev_dependencies:
   integration_test:
     sdk: flutter
