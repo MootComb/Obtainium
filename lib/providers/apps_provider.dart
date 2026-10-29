@@ -14,6 +14,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:crypto/crypto.dart';
 import 'package:easy_localization/easy_localization.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:native_download/native_download.dart';
 import 'package:obtainium/custom_errors.dart';
 import 'package:obtainium/core/logging/app_logger.dart';
 import 'package:obtainium/providers/notifications_provider.dart';
@@ -55,6 +56,44 @@ const int _bgClientExceptionRetryWaitSeconds = 15 * 60;
 
 final packageManager = AndroidPackageManager();
 final packageInfoFlags = PackageInfoFlags({PMFlag.getSigningCertificates});
+
+/// Download a file using the native (Java/Kotlin) transport.
+Future<File> _downloadWithNativeTransport(
+  String url,
+  String outputPath,
+  Map<String, String>? headers,
+  int rangeStart,
+  int? totalLength,
+  bool rangeSupported,
+  Map<String, dynamic> additionalSettings,
+  Function? onProgress,
+  CancellationToken? cancellationToken,
+) async {
+  final request = NativeDownloadRequest.start(
+    url: url,
+    outputPath: outputPath,
+    headers: headers,
+    rangeStart: rangeStart,
+    totalLength: totalLength,
+    rangeSupported: rangeSupported,
+    allowInsecure: additionalSettings['allowInsecure'] == true,
+    tlsPolicy: HttpService.tlsPolicyForUrl(
+      url,
+      certificatePinning:
+          additionalSettings['enableCertificatePinning'] == true,
+    ),
+    onProgress: onProgress == null
+        ? null
+        : (progress, received, total) => onProgress(progress, received, total),
+  );
+  final cancelRequest = request.cancel;
+  cancellationToken?.addOnCancelCallback(cancelRequest);
+  try {
+    return await request.future;
+  } finally {
+    cancellationToken?.removeOnCancelCallback(cancelRequest);
+  }
+}
 
 /// Live download state for an app: the progress percent (listenable, with -1
 /// meaning "installing" and null meaning "idle") plus the bytes downloaded and
@@ -483,6 +522,27 @@ Future<File> downloadFile(
     return null;
   }();
   int rangeStart = targetFileLength ?? 0;
+  if (Platform.isAndroid) {
+    final nativeFile = await _downloadWithNativeTransport(
+      url,
+      tempDownloadedFile.path,
+      reqHeaders,
+      rangeStart,
+      fullContentLength,
+      rangeFeatureEnabled,
+      additionalSettings,
+      onProgress,
+      cancellationToken,
+    );
+    if (nativeFile.existsSync()) {
+      onProgress?.call(null, null, null);
+      if (downloadedFile.existsSync()) {
+        deleteFile(downloadedFile);
+      }
+      nativeFile.renameSync(downloadedFile.path);
+      return downloadedFile;
+    }
+  }
   IOSink? sink;
   bool sentRangeRequest = false;
   if (rangeFeatureEnabled && fullContentLength != null && rangeStart > 0) {
@@ -1342,9 +1402,30 @@ class CancellationException implements Exception {}
 
 class CancellationToken {
   bool _cancelled = false;
+  final List<void Function()> _onCancelCallbacks = [];
+
   bool get isCancelled => _cancelled;
 
-  void cancel() => _cancelled = true;
+  void addOnCancelCallback(void Function() callback) {
+    if (_cancelled) {
+      callback();
+    } else {
+      _onCancelCallbacks.add(callback);
+    }
+  }
+
+  void removeOnCancelCallback(void Function() callback) {
+    _onCancelCallbacks.remove(callback);
+  }
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    for (final callback in List<void Function()>.from(_onCancelCallbacks)) {
+      callback();
+    }
+    _onCancelCallbacks.clear();
+  }
 
   void throwIfCancelled() {
     if (_cancelled) throw CancellationException();
