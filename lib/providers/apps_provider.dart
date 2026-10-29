@@ -77,11 +77,7 @@ Future<File> _downloadWithNativeTransport(
     totalLength: totalLength,
     rangeSupported: rangeSupported,
     allowInsecure: additionalSettings['allowInsecure'] == true,
-    tlsPolicy: HttpService.tlsPolicyForUrl(
-      url,
-      certificatePinning:
-          additionalSettings['enableCertificatePinning'] == true,
-    ),
+    tlsPolicy: null,
     onProgress: onProgress == null
         ? null
         : (progress, received, total) => onProgress(progress, received, total),
