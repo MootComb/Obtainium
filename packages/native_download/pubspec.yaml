@@ -10,9 +10,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  native_download:
-    path: packages/native_download
-    
+
 flutter:
   plugin:
     platforms:
